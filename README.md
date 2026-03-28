@@ -1,34 +1,66 @@
-# ESP32_BadApple
-Bad Apple video by Touhou on ESP32 with SSD1306 OLED, uses the Heatshrink compression library to decompress the RLE encoded video data.
-First version, no sound yet, video only.
+# ESP32 Video Display System
+
+Play any black and white video on ESP32 with SSD1306 OLED display.
+
+**Original Project**: Based on [ESP32_BadApple by Hackerspace-FFM](https://github.com/hackffm/ESP32_BadApple)
 
 ![Bad Apple on ESP32](ESP32_BadApple.jpg)
 
-## Hardware Requirements
-Runs on ESP32 modules with OLED displays based on SSD1306. Typical modules are available from Heltec or TTGO or others.
+## Hardware Setup
+
+### Required Components
+- ESP32 development board
+- SSD1306 OLED display (128x64)
+- I2C connection: SDA to GPIO 21, SCL to GPIO 22
+
+### Wiring
+```
+ESP32    OLED
+3.3V  -> VCC
+GND   -> GND
+GPIO21 -> SDA
+GPIO22 -> SCL
+```
 
 ## Software Requirements
-* Arduino 1.8.x
-* ESP32 Arduino core from https://github.com/espressif/arduino-esp32
-* OLED display driver from https://github.com/ThingPulse/esp8266-oled-ssd1306
-* ESP32 SPIFFS Upload Plugin from https://github.com/me-no-dev/arduino-esp32fs-plugin
+- Arduino IDE or PlatformIO
+- ESP32 Arduino core
+- Adafruit SSD1306 library
 
-# Usage
-* Adapt display pins in main sketch if necessary
-* Upload sketch
-* Upload sketch data via "Tools" -> "ESP32 Sketch Data Upload"
+## Video Requirements
+**IMPORTANT**: Videos must be black and white (monochrome) because the OLED is monochrome.
 
-Enjoy video. Pressing PRG button (GPIO0) for max display speed (mainly limited by I2C transfer), otherwise limited to 30 fps.
+## Quick Setup
 
-# How does it work
-Video have been separated into >6500 single pictures, resized to 128x64 pixels using VLC. 
-Python skript used to run-length encode the 8-bit-packed data using 0x55 and 0xAA as escape marker and putting all into one file.
-RLE file has been further compressed using heatshrink compression for easy storage into SPIFFS (which can hold only 1MB by default). 
-Heatshrink for Arduino uses ZIP-like algorithm and is available also as a library under https://github.com/p-v-o-s/Arduino-HScompression and 
-original documentation is here: https://spin.atomicobject.com/2013/03/14/heatshrink-embedded-data-compression/
+### 1. Prepare Your Video
+1. Convert video to 128x64 PNG frames
+2. Save as sequential files: `frame00001.png`, `frame00002.png`, etc.
 
-# Known issues
-SPIFFS is broken currently (Feb 2018) in ESP32 Arduino core - hopefully will be fixed there soon. Search through issue list there for solutions - 
-usually an earlier commit can be used to get it working. 
+### 2. Convert Video
+Edit `Compress.py` to point to your frames:
+```python
+# Change path and frame count
+for nr in range(1, YOUR_TOTAL_FRAMES + 1):
+    fn = "path/to/your/frames/frame" + "{0:0>5}".format(nr) + ".png"
+```
 
+Run the conversion:
+```bash
+python Compress.py
+```
 
+This creates `data/video.hs` file.
+
+### 3. Upload to ESP32
+1. Upload the main sketch
+2. Upload data via "Tools" → "ESP32 Sketch Data Upload"
+
+## Controls
+- **Normal mode**: 30 FPS
+- **Button (GPIO0)**: Maximum speed
+
+## Credits
+Based on [ESP32_BadApple](https://github.com/hackffm/ESP32_BadApple) by Hackerspace-FFM
+
+## License
+MIT License

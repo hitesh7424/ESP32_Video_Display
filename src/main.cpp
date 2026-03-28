@@ -1,13 +1,34 @@
 // Bad Apple for ESP32 with OLED SSD1306 | 2018 by Hackerspace-FFM.de | MIT-License.
+// Enhanced version with performance optimizations
 #include "FS.h"
 #include "SPIFFS.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "heatshrink_decoder.h"
 
-// Hints: 
+// Board Boot SW GPIO 0
+#define BOOT_SW 0
+
+// Frame counter
+#define ENABLE_FRAME_COUNTER
+
+// Disable heatshrink error checking
+#define DISABLE_HS_ERROR
+
+// Hints:
 // * Adjust the display pins below
 // * After uploading to ESP32, also do "ESP32 Sketch Data Upload" from Arduino
+
+// SSD1306 display I2C bus
+#define I2C_SCL 22  // GPIO 22 (SCL)
+#define I2C_SDA 21  // GPIO 21 (SDA)
+
+#define OLED_BRIGHTNESS 16
+
+// MAX freq for SCL is 4 MHz, However, Actual measured value is 892 kHz . (ESP32-D0WDQ6 (revision 1))
+// see Inter-Integrated Circuit (I2C)
+// https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/i2c.html
+#define I2C_SCLK_FREQ 4000000
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -18,13 +39,23 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 static heatshrink_decoder hsd;
 
-// global storage for putPixels 
-int16_t curr_x = 0;
-int16_t curr_y = 0;
-
 // global storage for decodeRLE
 int32_t runlength = -1;
 int32_t c_to_dup = -1;
+
+volatile unsigned long lastRefresh;
+// 30 fps target rate = 33.333us
+#define FRAME_DELAY_US 33333UL
+#ifdef ENABLE_FRAME_COUNTER
+int32_t frame = 0;
+#endif
+
+volatile bool isButtonPressing = false;
+
+void ARDUINO_ISR_ATTR isr() {
+    lastRefresh = micros();
+    isButtonPressing = (digitalRead(BOOT_SW) == LOW);
+}
 
 void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
     Serial.printf("Listing directory: %s\n", dirname);
@@ -57,12 +88,12 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
     }
 }
 
-uint32_t lastRefresh = 0;
-
 void putPixels(uint8_t c, int32_t len) {
-  uint8_t b = 0;
+  uint8_t b = 0x80;
+  static int16_t curr_x = 0;
+  static int16_t curr_y = 0;
+
   while(len--) {
-    b = 128;
     for(int i=0; i<8; i++) {
       if(c & b) {
         display.drawPixel(curr_x, curr_y, WHITE);  
@@ -77,13 +108,20 @@ void putPixels(uint8_t c, int32_t len) {
         if(curr_y >= 64) {
           curr_y = 0;
           display.display();
-          //display.clear();
-          // 30 fps target rate
-          if(digitalRead(0)) while((millis() - lastRefresh) < 33) ;
-          lastRefresh = millis();
+          
+          // 30 fps target rate with microsecond precision
+          if(!isButtonPressing) {
+            lastRefresh += FRAME_DELAY_US;
+#ifdef ENABLE_FRAME_COUNTER
+            // Adjust 33.334us every 3 frame
+            if ((++frame % 3) == 0) lastRefresh++;
+#endif
+            while(micros() < lastRefresh) ;
+          }
         }
       }
     }
+    b = 0x80;
   }
 }
 
@@ -156,11 +194,9 @@ void readFile(fs::FS &fs, const char * path){
     // init display, putPixels and decodeRLE
     display.clearDisplay();
     display.display();
-    curr_x = 0;
-    curr_y = 0;
     runlength = -1;
     c_to_dup = -1;   
-    lastRefresh = millis(); 
+    lastRefresh = micros();
 
     // init decoder
     heatshrink_decoder_reset(&hsd);
