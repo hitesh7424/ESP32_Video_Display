@@ -4,7 +4,7 @@ Play any black and white video on ESP32 with SSD1306 OLED display.
 
 **Original Project**: Based on [ESP32_BadApple by Hackerspace-FFM](https://github.com/hackffm/ESP32_BadApple)
 
-![Bad Apple on ESP32](ESP32_BadApple.jpg)
+![Video Display on ESP32](./images/star%20animation.png)
 
 ## Hardware Setup
 
@@ -30,18 +30,21 @@ GPIO22 -> SCL
 ## Video Requirements
 **IMPORTANT**: Videos must be black and white (monochrome) because the OLED is monochrome.
 
-## Quick Setup
+## Usage
 
-### 1. Prepare Your Video
-1. Convert video to 128x64 PNG frames
-2. Save as sequential files: `frame00001.png`, `frame00002.png`, etc.
+1. Upload the main sketch
+2. Upload data folder via "Tools" → "ESP32 Sketch Data Upload"
+
+## Upload your own video
+
+### 1. Install Required Libraries
+- install python requirements: `pip install -r requirements.txt`
+- setup platformio and install required libraries in platformio.ini
 
 ### 2. Convert Video
-Edit `Compress.py` to point to your frames:
+Edit `Compress.py` to point to your video:
 ```python
-# Change path and frame count
-for nr in range(1, YOUR_TOTAL_FRAMES + 1):
-    fn = "path/to/your/frames/frame" + "{0:0>5}".format(nr) + ".png"
+    video_path = Path("your_video_path.mp4")
 ```
 
 Run the conversion:
@@ -49,15 +52,11 @@ Run the conversion:
 python Compress.py
 ```
 
-This creates `data/video.hs` file.
+This creates `video.bin` file place into `data` folder.
 
 ### 3. Upload to ESP32
 1. Upload the main sketch
 2. Upload data via "Tools" → "ESP32 Sketch Data Upload"
-
-## Controls
-- **Normal mode**: 30 FPS
-- **Button (GPIO0)**: Maximum speed
 
 ## Credits
 Based on [ESP32_BadApple](https://github.com/hackffm/ESP32_BadApple) by Hackerspace-FFM

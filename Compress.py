@@ -1,147 +1,88 @@
-from PIL import Image
+#!/usr/bin/env python3
+"""
+Extract frames from MP4 and create binary frame data for ESP32
+"""
 
-def get_compressed(filename):
-    # Convert to gray and then to 1 bit using custom threshold
-    im = Image.open(filename).convert(mode="L").point(lambda i: i > 127 and 255)
+import cv2
+import numpy as np
+import struct
+from pathlib import Path
 
-    imdata = list(im.getdata())
-
-    imbit = []
-    b_count = 0
-    c8 = 0
-    for c in imdata[:]:
-        c8 = c8 << 1
-        if c != 0:
-            c8 = c8 | 1
-        b_count += 1
-        if b_count == 8:
-            b_count = 0
-            imbit.append(c8)
-            c8 = 0
-
-
-    # ENCODE
-    im_comp = []
-    c_m1 = imbit[0]
-    runlength = 0
-    # run-length encode only bytes 0 and 255
-    # use 0x55 as escape sequence for 0 and 0xaa for 255
-    # afterwards the run-length is encoded into 1 or 2 bytes
-    # for run-lengths of 1..127 1 byte is used, for run-lengths
-    # above the highest bit is set to 1 and the MSB is added
-    # to the second byte.
-    # run length of 0 is used to replace escape character
-    for c in imbit[1:]:
-        if runlength == 0:
-            if c_m1 in [0, 255]:
-                if c_m1 == c:
-                    runlength = 2
-                else:
-                    im_comp.append(c_m1)
-            else:
-                # encode directly
-                im_comp.append(c_m1)
-                if c_m1 in [0x55, 0xaa]:
-                    im_comp.append(0)
+def extract_and_pack_frames(video_path, output_path, target_width=128, target_height=64):
+    """
+    Extract frames from video and pack them as raw 1-bit data.
+    Each frame is 128x64 = 8192 bits = 1024 bytes
+    """
+    
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"Error: Cannot open {video_path}")
+        return False
+    
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    print(f"Video: {total_frames} frames @ {fps} FPS")
+    print(f"Target: {target_width}x{target_height} per frame")
+    
+    output_data = bytearray()
+    frame_count = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Convert to grayscale
+        if len(frame.shape) == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
-            if c_m1 == c:
-                runlength += 1
-            else:
-                if runlength == 2:
-                    im_comp.append(c_m1)
-                    im_comp.append(c_m1)
-                else:
-                    if c_m1 == 0:
-                        im_comp.append(0x55)
-                    else:
-                        im_comp.append(0xaa)
-                    if runlength <= 127:
-                        im_comp.append(runlength)
-                    else:
-                        im_comp.append((runlength & 0x7f) | 128)
-                        im_comp.append(runlength >> 7)
-                runlength = 0
-        c_m1 = c
+            gray = frame
+        
+        # Resize to target size
+        resized = cv2.resize(gray, (target_width, target_height), interpolation=cv2.INTER_AREA)
+        
+        # Convert to 1-bit using threshold at 128
+        _, binary = cv2.threshold(resized, 128, 255, cv2.THRESH_BINARY)
+        
+        # Pack into bytes (each bit is 1 pixel, 8 pixels per byte)
+        frame_bytes = bytearray()
+        pixels = binary.flatten()
+        
+        for i in range(0, len(pixels), 8):
+            byte = 0
+            for j in range(8):
+                if i + j < len(pixels):
+                    # 1 for white (255), 0 for black (0)
+                    if pixels[i + j] > 127:
+                        byte |= (1 << (7 - j))
+            frame_bytes.append(byte)
+        
+        output_data.extend(frame_bytes)
+        frame_count += 1
+        
+        if frame_count % 50 == 0:
+            print(f"  Processed {frame_count}/{total_frames} frames ({len(output_data)} bytes)")
+    
+    cap.release()
+    
+    # Write raw binary data
+    with open(output_path, 'wb') as f:
+        f.write(output_data)
+    
+    print(f"\nOutput: {output_path}")
+    print(f"Frames: {frame_count}")
+    print(f"Total size: {len(output_data)} bytes")
+    print(f"Per frame: {len(output_data) // frame_count} bytes")
+    print(f"Duration: {frame_count / fps:.1f}s @ {fps} FPS")
+    
+    return frame_count, len(output_data)
 
-    if runlength == 0:
-        im_comp.append(c_m1)
+if __name__ == '__main__':
+    video_path = Path("./video_project.mp4")
+    output_path = Path("./video.bin")
+    
+    if video_path.exists():
+        frame_count, data_size = extract_and_pack_frames(video_path, output_path)
     else:
-        if runlength == 2:
-            im_comp.append(c_m1)
-            im_comp.append(c_m1)
-        else:
-            if c_m1 == 0:
-                im_comp.append(0x55)
-            else:
-                im_comp.append(0xaa)
-            if runlength <= 127:
-                im_comp.append(runlength)
-            else:
-                im_comp.append((runlength & 0x7f) | 128)
-                im_comp.append(runlength >> 7)
-        runlength = 0
-
-    # DECODE
-    im_decomp = []
-    runlength = -1
-    c_to_dup = -1
-    for c in im_comp[:]:
-        if c_to_dup == -1:
-            if c in [0x55, 0xaa]:
-                c_to_dup = c
-            else:
-                im_decomp.append(c)
-        else:
-            if runlength == -1:
-                if c == 0:
-                    im_decomp.append(c_to_dup)
-                    c_to_dup = -1
-                elif (c & 0x80) == 0:
-                    if c_to_dup == 0x55:
-                        im_decomp.extend([0] * c)
-                    else:
-                        im_decomp.extend([255] * c)
-                    c_to_dup = -1
-                else:
-                    runlength = c & 0x7f
-            else:
-                runlength = runlength | (c << 7)
-                if c_to_dup == 0x55:
-                    im_decomp.extend([0] * runlength)
-                else:
-                    im_decomp.extend([255] * runlength)
-                c_to_dup = -1
-                runlength = -1
-
-    if len(imbit) != len(im_decomp):
-        print("Decomp len fail!")
-    else:
-        for a, b in zip(imbit, im_decomp):
-            if (b < 0) or (b > 255):
-                print("Range to big")
-            if a != b:
-                print("Decomp fail")
-                break
-    return im_comp, imbit
-
-sumlen = 0
-movie = []
-output_file = open("E:\\Proggen\\BA\\video.bin","wb")
-output_file_uc = open("E:\\Proggen\\BA\\video.uc","wb")
-# 6573 5470/2
-for nr in range(1, int(6574)):
-    fn = "E:\Proggen\BA\scene" + "{0:0>5}".format(nr) + ".png"
-    comp_dat, uncomp = get_compressed(fn)
-    output_file.write(bytearray(comp_dat))
-    output_file_uc.write(bytearray(uncomp))
-    # movie.extend(comp_dat)
-    sumlen += len(comp_dat)
-
-output_file.close()
-output_file_uc.close()
-#movie_dat = bytearray(movie)
-#print(len(movie_dat))
-
-print(sumlen)
-print("Done")
-#im.show()
+        print(f"Error: {video_path} not found")
