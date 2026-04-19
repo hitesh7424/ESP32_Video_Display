@@ -1,6 +1,6 @@
 # ESP32 Video Display System
 
-Play any black and white video on ESP32 with SSD1306 OLED display.
+Play black-and-white video on ESP32 with SSD1306 OLED displays.
 
 **Original Project**: Based on [ESP32_BadApple by Hackerspace-FFM](https://github.com/hackffm/ESP32_BadApple)
 
@@ -9,12 +9,14 @@ Play any black and white video on ESP32 with SSD1306 OLED display.
 ## Hardware Setup
 
 ### Required Components
+
 - ESP32 development board
-- SSD1306 OLED display (128x64)
+- SSD1306 OLED display (128x32 or 128x64)
 - I2C connection: SDA to GPIO 21, SCL to GPIO 22
 
 ### Wiring
-```
+
+```text
 ESP32    OLED
 3.3V  -> VCC
 GND   -> GND
@@ -23,12 +25,18 @@ GPIO22 -> SCL
 ```
 
 ## Software Requirements
+
 - Arduino IDE or PlatformIO
 - ESP32 Arduino core
 - Adafruit SSD1306 library
+- Python 3
+- OpenCV (`opencv-python`)
 
 ## Video Requirements
+
 **IMPORTANT**: Videos must be black and white (monochrome) because the OLED is monochrome.
+
+Recommended: keep source videos low resolution and short duration to reduce output `.bin` size.
 
 ## Usage
 
@@ -38,28 +46,55 @@ GPIO22 -> SCL
 ## Upload your own video
 
 ### 1. Install Required Libraries
+
 - install python requirements: `pip install -r requirements.txt`
 - setup platformio and install required libraries in platformio.ini
 
 ### 2. Convert Video
-Edit `Compress.py` to point to your video:
-```python
-    video_path = Path("your_video_path.mp4")
-```
 
-Run the conversion:
+Use the converter script directly with arguments:
+
 ```bash
-python Compress.py
+python compress.py --video "./videos/your_video.mp4"
 ```
 
-This creates `video.bin` file place into `data` folder.
+Default run (no `--size`) generates both OLED formats:
+
+- `./data/video_128x32.bin`
+- `./data/video_128x64.bin`
+
+Generate only one format:
+
+```bash
+python compress.py --video "./videos/your_video.mp4" --size 128x64 --output ./data/video.bin
+```
+
+Generate multiple formats with custom base output name:
+
+```bash
+python compress.py --video "./videos/your_video.mp4" --size 128x32 --size 128x64 --output ./data/video.bin
+```
+
+When multiple sizes are requested, output files are auto-suffixed:
+
+- `video_128x32.bin`
+- `video_128x64.bin`
 
 ### 3. Upload to ESP32
+
 1. Upload the main sketch
 2. Upload data via "Tools" → "ESP32 Sketch Data Upload"
 
+```bash
+platformio run --target uploadfs --environment esp32doit-devkit-v1
+```
+
+Make sure the firmware reads the same `.bin` filename you generated.
+
 ## Credits
+
 Based on [ESP32_BadApple](https://github.com/hackffm/ESP32_BadApple) by Hackerspace-FFM
 
 ## License
+
 MIT License
