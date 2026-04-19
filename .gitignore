@@ -1,3 +1,8 @@
 venv
 .pio/
 .vscode/
+.venv/
+.pio
+.vscode
+.venv
+.dblite

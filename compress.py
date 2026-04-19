@@ -5,15 +5,71 @@ Extract frames from MP4 and create binary frame data for ESP32
 
 import cv2
 import argparse
+import numpy as np
 from pathlib import Path
 
 
-def pack_1bit_frame(gray_frame, target_width, target_height):
-    """Resize a grayscale frame and pack pixels into 1-bit-per-pixel bytes."""
-    # Resize to target size
+def to_grayscale(frame):
+    """Convert a frame to single-channel grayscale."""
+    if frame.ndim == 2:
+        return frame
+
+    channels = frame.shape[2]
+    if channels == 3:
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if channels == 4:
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+
+    raise ValueError(f"Unsupported channel count: {channels}")
+
+
+def describe_source_format(frame):
+    """Return a short description and whether source is already monochrome."""
+    if frame is None:
+        return "unknown", False
+
+    if frame.ndim == 2:
+        return "grayscale", True
+
+    channels = frame.shape[2]
+    if channels == 3:
+        return "color (BGR)", False
+    if channels == 4:
+        return "color with alpha (BGRA)", False
+
+    return f"{channels}-channel", False
+
+
+def resize_gray_frame(gray_frame, target_width, target_height, resize_mode="fit"):
+    """Resize grayscale frame to target resolution using fit (letterbox) or stretch."""
+    src_height, src_width = gray_frame.shape[:2]
+    if src_width == target_width and src_height == target_height:
+        return gray_frame
+
+    if resize_mode == "stretch":
+        return cv2.resize(
+            gray_frame, (target_width, target_height), interpolation=cv2.INTER_AREA
+        )
+
+    # fit mode: preserve aspect ratio, add black padding as needed
+    scale = min(target_width / src_width, target_height / src_height)
+    new_width = max(1, int(round(src_width * scale)))
+    new_height = max(1, int(round(src_height * scale)))
+
     resized = cv2.resize(
-        gray_frame, (target_width, target_height), interpolation=cv2.INTER_AREA
+        gray_frame, (new_width, new_height), interpolation=cv2.INTER_AREA
     )
+    canvas = np.zeros((target_height, target_width), dtype=gray_frame.dtype)
+
+    x_offset = (target_width - new_width) // 2
+    y_offset = (target_height - new_height) // 2
+    canvas[y_offset : y_offset + new_height, x_offset : x_offset + new_width] = resized
+    return canvas
+
+
+def pack_1bit_frame(gray_frame, target_width, target_height, resize_mode="fit"):
+    """Resize frame as needed and pack pixels into 1-bit-per-pixel bytes."""
+    resized = resize_gray_frame(gray_frame, target_width, target_height, resize_mode)
 
     # Convert to 1-bit using threshold at 128
     _, binary = cv2.threshold(resized, 128, 255, cv2.THRESH_BINARY)
@@ -35,7 +91,7 @@ def pack_1bit_frame(gray_frame, target_width, target_height):
 
 
 def extract_and_pack_frames(
-    video_path, output_path, target_width=128, target_height=64
+    video_path, output_path, target_width=128, target_height=64, resize_mode="fit"
 ):
     """
     Extract frames from video and pack them as raw 1-bit data.
@@ -49,9 +105,31 @@ def extract_and_pack_frames(
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    src_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     print(f"Video: {total_frames} frames @ {fps} FPS")
+    print(f"Source: {src_width}x{src_height}")
     print(f"Target: {target_width}x{target_height} per frame")
+
+    first_ok, first_frame = cap.read()
+    if not first_ok:
+        cap.release()
+        print("Error: Video has no readable frames")
+        return False
+
+    source_format, already_mono = describe_source_format(first_frame)
+    if already_mono:
+        print(f"Input format: {source_format}; applying 1-bit monochrome threshold")
+    else:
+        print(
+            f"Input format: {source_format}; converting to monochrome (grayscale + 1-bit threshold)"
+        )
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    if src_width != target_width or src_height != target_height:
+        print(f"Resize: {resize_mode} (auto-convert to target resolution)")
 
     output_data = bytearray()
     frame_count = 0
@@ -61,13 +139,9 @@ def extract_and_pack_frames(
         if not ret:
             break
 
-        # Convert to grayscale
-        if len(frame.shape) == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        gray = to_grayscale(frame)
 
-        frame_bytes = pack_1bit_frame(gray, target_width, target_height)
+        frame_bytes = pack_1bit_frame(gray, target_width, target_height, resize_mode)
 
         output_data.extend(frame_bytes)
         frame_count += 1
@@ -88,13 +162,15 @@ def extract_and_pack_frames(
     print(f"\nOutput: {output_path}")
     print(f"Frames: {frame_count}")
     print(f"Total size: {len(output_data)} bytes")
-    print(f"Per frame: {len(output_data) // frame_count} bytes")
-    print(f"Duration: {frame_count / fps:.1f}s @ {fps} FPS")
+    per_frame = len(output_data) // frame_count if frame_count else 0
+    print(f"Per frame: {per_frame} bytes")
+    if frame_count and fps:
+        print(f"Duration: {frame_count / fps:.1f}s @ {fps} FPS")
 
     return frame_count, len(output_data)
 
 
-def extract_and_pack_multi(video_path, output_configs):
+def extract_and_pack_multi(video_path, output_configs, resize_mode="fit"):
     """
     Extract frames once and generate multiple output binaries.
     output_configs: list of tuples (output_path, width, height)
@@ -106,11 +182,35 @@ def extract_and_pack_multi(video_path, output_configs):
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    src_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     print(f"Video: {total_frames} frames @ {fps} FPS")
+    print(f"Source: {src_width}x{src_height}")
+    print(f"Resize mode: {resize_mode}")
+
+    first_ok, first_frame = cap.read()
+    if not first_ok:
+        cap.release()
+        print("Error: Video has no readable frames")
+        return False
+
+    source_format, already_mono = describe_source_format(first_frame)
+    if already_mono:
+        print(f"Input format: {source_format}; applying 1-bit monochrome threshold")
+    else:
+        print(
+            f"Input format: {source_format}; converting to monochrome (grayscale + 1-bit threshold)"
+        )
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
     print("Generating outputs:")
     for output_path, width, height in output_configs:
-        print(f"  - {output_path} ({width}x{height})")
+        resize_note = (
+            " (resize)" if (src_width != width or src_height != height) else ""
+        )
+        print(f"  - {output_path} ({width}x{height}){resize_note}")
 
     output_buffers = {output_path: bytearray() for output_path, _, _ in output_configs}
     frame_count = 0
@@ -120,14 +220,10 @@ def extract_and_pack_multi(video_path, output_configs):
         if not ret:
             break
 
-        # Convert to grayscale once per source frame
-        if len(frame.shape) == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        gray = to_grayscale(frame)
 
         for output_path, width, height in output_configs:
-            frame_bytes = pack_1bit_frame(gray, width, height)
+            frame_bytes = pack_1bit_frame(gray, width, height, resize_mode)
             output_buffers[output_path].extend(frame_bytes)
 
         frame_count += 1
@@ -227,6 +323,15 @@ def parse_args():
             "Example: --size 128x32 --size 128x64"
         ),
     )
+    parser.add_argument(
+        "--resize-mode",
+        choices=["fit", "stretch"],
+        default="fit",
+        help=(
+            "Resize behavior when source resolution differs from target. "
+            "fit=keep aspect ratio with padding, stretch=fill exact size."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -241,8 +346,10 @@ if __name__ == "__main__":
     if video_path.exists():
         if len(output_configs) == 1:
             output_path, width, height = output_configs[0]
-            extract_and_pack_frames(video_path, output_path, width, height)
+            extract_and_pack_frames(
+                video_path, output_path, width, height, args.resize_mode
+            )
         else:
-            extract_and_pack_multi(video_path, output_configs)
+            extract_and_pack_multi(video_path, output_configs, args.resize_mode)
     else:
         print(f"Error: {video_path} not found")

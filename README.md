@@ -87,6 +87,7 @@ When multiple sizes are requested, output files are auto-suffixed:
 
 ```bash
 platformio run --target uploadfs --environment esp32doit-devkit-v1
+platformio run --target uploadfs --environment esp32doit-devkit-v1-new
 ```
 
 Make sure the firmware reads the same `.bin` filename you generated.
