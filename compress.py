@@ -282,10 +282,6 @@ def build_output_configs(base_output_path, resolutions):
     """Build output file list from base output path and requested resolutions."""
     unique_resolutions = list(dict.fromkeys(resolutions))
 
-    if len(unique_resolutions) == 1:
-        width, height = unique_resolutions[0]
-        return [(base_output_path, width, height)]
-
     output_configs = []
     for width, height in unique_resolutions:
         file_name = f"{base_output_path.stem}_{width}x{height}{base_output_path.suffix}"
@@ -309,8 +305,8 @@ def parse_args():
         type=Path,
         default=Path("./data/video.bin"),
         help=(
-            "Output file path or base file path. "
-            "If multiple sizes are requested, files are suffixed as _<width>x<height>."
+            "Output base file path. "
+            "Generated files are always suffixed as _<width>x<height>."
         ),
     )
     parser.add_argument(

@@ -182,6 +182,54 @@ void playChannelFrame(PlaybackChannel& channel)
   channel.currentFrame++;
 }
 
+void drawLoadingScreen(PlaybackChannel& channel, uint8_t progressPercent)
+{
+  if (!channel.enabled)
+  {
+    return;
+  }
+
+  const int barX = 8;
+  const int barWidth = SCREEN_WIDTH - (barX * 2);
+  const int barHeight = 8;
+  const int textY = 8;
+  const int barY = (channel.frameHeight <= 32) ? 20 : 40;
+  int filledWidth = (barWidth * progressPercent) / 100;
+  if (filledWidth < 0)
+  {
+    filledWidth = 0;
+  }
+  if (filledWidth > barWidth)
+  {
+    filledWidth = barWidth;
+  }
+
+  channel.display->clearDisplay();
+  channel.display->setTextSize(1);
+  channel.display->setTextColor(SSD1306_WHITE);
+  channel.display->setCursor(0, textY);
+  channel.display->print("Loading ");
+  channel.display->print(progressPercent);
+  channel.display->print("%");
+
+  channel.display->drawRect(barX, barY, barWidth, barHeight, SSD1306_WHITE);
+  if (filledWidth > 0)
+  {
+    channel.display->fillRect(barX + 1, barY + 1, filledWidth - 2, barHeight - 2, SSD1306_WHITE);
+  }
+  channel.display->display();
+}
+
+void showStartupLoadingScreen()
+{
+  for (uint8_t progress = 0; progress <= 100; progress += 10)
+  {
+    drawLoadingScreen(channel64, progress);
+    drawLoadingScreen(channel32, progress);
+    delay(100);
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -209,6 +257,7 @@ void setup()
     }
   }
 
+  showStartupLoadingScreen();
   Serial.println("Playback started");
 }
 
